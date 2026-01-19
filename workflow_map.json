@@ -1,0 +1,403 @@
+{
+  "workflow_metadata": {
+    "workflow_id": "shipping_zone_setup_oceania",
+    "workflow_name": "Global Shipping Zone Configuration",
+    "platform": "vendure",
+    "user_intent": "Set up a new shipping zone for 'Oceania'. Add 'Australia' and 'New Zealand' to this zone. Then, configure a 'Flat Rate' shipping method of $15 that only applies to this zone.",
+    "created_at": "2026-01-19",
+    "complexity_level": "medium",
+    "estimated_steps": 4
+  },
+  "semantic_mappings": [
+    {
+      "user_term": "shipping zone",
+      "api_concept": "Zone",
+      "api_entity": "Zone",
+      "mapping_notes": "Zones define geographical regions for shipping and tax purposes"
+    },
+    {
+      "user_term": "Oceania",
+      "api_concept": "zone.name",
+      "api_entity": "string",
+      "mapping_notes": "Human-readable zone identifier"
+    },
+    {
+      "user_term": "Add countries",
+      "api_concept": "addMembersToZone",
+      "api_entity": "mutation",
+      "mapping_notes": "Associates countries with a zone using country IDs"
+    },
+    {
+      "user_term": "Flat Rate shipping",
+      "api_concept": "ShippingMethod with FlatRateCalculator",
+      "api_entity": "ShippingMethod",
+      "mapping_notes": "Calculator determines shipping cost structure"
+    },
+    {
+      "user_term": "$15",
+      "api_concept": "rate (in cents)",
+      "api_entity": "integer",
+      "transformation": "multiply_by_100",
+      "mapping_notes": "Currency values stored as integers in smallest unit (cents)"
+    }
+  ],
+  "workflow_steps": [
+    {
+      "step_id": "step_1",
+      "step_name": "Query Available Countries",
+      "step_type": "query",
+      "ui_context": {
+        "navigation_path": "Settings → Shipping Methods → [implicit country lookup]",
+        "user_action": "None (prerequisite data fetch)",
+        "ui_elements_interacted": []
+      },
+      "api_operation": {
+        "operation_type": "query",
+        "operation_name": "countries",
+        "graphql_query": "query GetCountries { countries { items { id code name } } }",
+        "endpoint_pattern": "/admin-api",
+        "method": "POST"
+      },
+      "inputs": {
+        "required": [],
+        "optional": []
+      },
+      "outputs": {
+        "australia_country_id": {
+          "extraction_path": "data.countries.items[?code=='AU'].id",
+          "data_type": "ID",
+          "description": "Country ID for Australia"
+        },
+        "new_zealand_country_id": {
+          "extraction_path": "data.countries.items[?code=='NZ'].id",
+          "data_type": "ID",
+          "description": "Country ID for New Zealand"
+        }
+      },
+      "dependencies": {
+        "depends_on_steps": [],
+        "required_for_steps": ["step_2"]
+      },
+      "error_handling": {
+        "failure_scenarios": ["Network error", "Countries not found"],
+        "retry_strategy": "exponential_backoff",
+        "fallback_action": "abort_workflow"
+      }
+    },
+    {
+      "step_id": "step_2",
+      "step_name": "Create Shipping Zone",
+      "step_type": "mutation",
+      "ui_context": {
+        "navigation_path": "Settings → Zones → Create Zone",
+        "user_action": "Click 'Create Zone', Fill name field, Click 'Create'",
+        "ui_elements_interacted": [
+          "button[Create Zone]",
+          "input[name]",
+          "button[Create/Save]"
+        ]
+      },
+      "api_operation": {
+        "operation_type": "mutation",
+        "operation_name": "createZone",
+        "graphql_query": "mutation CreateZone($input: CreateZoneInput!) { createZone(input: $input) { id name } }",
+        "endpoint_pattern": "/admin-api",
+        "method": "POST"
+      },
+      "inputs": {
+        "required": [
+          {
+            "field_name": "name",
+            "data_type": "String!",
+            "source": "user_input",
+            "value": "Oceania",
+            "validation": "non_empty_string"
+          }
+        ],
+        "optional": []
+      },
+      "outputs": {
+        "zone_id": {
+          "extraction_path": "data.createZone.id",
+          "data_type": "ID",
+          "description": "Unique identifier for the created zone"
+        },
+        "zone_name": {
+          "extraction_path": "data.createZone.name",
+          "data_type": "String",
+          "description": "Confirmed zone name"
+        }
+      },
+      "dependencies": {
+        "depends_on_steps": [],
+        "required_for_steps": ["step_3", "step_4"]
+      },
+      "error_handling": {
+        "failure_scenarios": ["Duplicate zone name", "Validation error"],
+        "retry_strategy": "none",
+        "fallback_action": "prompt_user_for_different_name"
+      }
+    },
+    {
+      "step_id": "step_3",
+      "step_name": "Add Countries to Zone",
+      "step_type": "mutation",
+      "ui_context": {
+        "navigation_path": "Settings → Zones → [Oceania] → Members → Add Members",
+        "user_action": "Select 'Australia' and 'New Zealand' from dropdown, Click 'Add'",
+        "ui_elements_interacted": [
+          "button[Add Members]",
+          "select[countries]",
+          "button[Add/Save]"
+        ]
+      },
+      "api_operation": {
+        "operation_type": "mutation",
+        "operation_name": "addMembersToZone",
+        "graphql_query": "mutation AddMembersToZone($zoneId: ID!, $memberIds: [ID!]!) { addMembersToZone(zoneId: $zoneId, memberIds: $memberIds) { id name members { ... on Country { id name } } } }",
+        "endpoint_pattern": "/admin-api",
+        "method": "POST"
+      },
+      "inputs": {
+        "required": [
+          {
+            "field_name": "zoneId",
+            "data_type": "ID!",
+            "source": "step_output",
+            "value": "{step_2.zone_id}",
+            "validation": "valid_id"
+          },
+          {
+            "field_name": "memberIds",
+            "data_type": "[ID!]!",
+            "source": "step_output",
+            "value": "[{step_1.australia_country_id}, {step_1.new_zealand_country_id}]",
+            "validation": "non_empty_array"
+          }
+        ],
+        "optional": []
+      },
+      "outputs": {
+        "updated_zone": {
+          "extraction_path": "data.addMembersToZone",
+          "data_type": "Zone",
+          "description": "Zone object with updated members"
+        }
+      },
+      "dependencies": {
+        "depends_on_steps": ["step_1", "step_2"],
+        "required_for_steps": ["step_4"],
+        "data_flow": [
+          {
+            "from": "step_1.australia_country_id",
+            "to": "step_3.inputs.memberIds[0]"
+          },
+          {
+            "from": "step_1.new_zealand_country_id",
+            "to": "step_3.inputs.memberIds[1]"
+          },
+          {
+            "from": "step_2.zone_id",
+            "to": "step_3.inputs.zoneId"
+          }
+        ]
+      },
+      "error_handling": {
+        "failure_scenarios": ["Invalid zone ID", "Invalid country IDs", "Countries already in zone"],
+        "retry_strategy": "none",
+        "fallback_action": "log_error_and_continue"
+      }
+    },
+    {
+      "step_id": "step_4",
+      "step_name": "Create Flat Rate Shipping Method",
+      "step_type": "mutation",
+      "ui_context": {
+        "navigation_path": "Settings → Shipping Methods → Create Shipping Method",
+        "user_action": "Fill method name, Select calculator 'Flat Rate', Set rate to $15, Select zone 'Oceania', Click 'Create'",
+        "ui_elements_interacted": [
+          "button[Create Shipping Method]",
+          "input[name]",
+          "select[calculator]",
+          "input[rate]",
+          "select[zone]",
+          "button[Create/Save]"
+        ]
+      },
+      "api_operation": {
+        "operation_type": "mutation",
+        "operation_name": "createShippingMethod",
+        "graphql_query": "mutation CreateShippingMethod($input: CreateShippingMethodInput!) { createShippingMethod(input: $input) { id code name calculator { code args { name value } } checker { code args { name value } } } }",
+        "endpoint_pattern": "/admin-api",
+        "method": "POST"
+      },
+      "inputs": {
+        "required": [
+          {
+            "field_name": "code",
+            "data_type": "String!",
+            "source": "derived",
+            "value": "oceania-flat-rate",
+            "validation": "slug_format",
+            "transformation": "slugify_from_name"
+          },
+          {
+            "field_name": "name",
+            "data_type": "String!",
+            "source": "user_input",
+            "value": "Oceania Flat Rate",
+            "validation": "non_empty_string"
+          },
+          {
+            "field_name": "calculator",
+            "data_type": "ConfigurableOperationInput!",
+            "source": "user_input",
+            "value": {
+              "code": "flat-rate",
+              "arguments": [
+                {
+                  "name": "rate",
+                  "value": "1500"
+                },
+                {
+                  "name": "taxRate",
+                  "value": "0"
+                }
+              ]
+            },
+            "validation": "valid_calculator_config",
+            "transformation_notes": "$15 converted to 1500 cents"
+          },
+          {
+            "field_name": "checker",
+            "data_type": "ConfigurableOperationInput!",
+            "source": "step_output",
+            "value": {
+              "code": "shipping-zone-checker",
+              "arguments": [
+                {
+                  "name": "zoneId",
+                  "value": "{step_2.zone_id}"
+                }
+              ]
+            },
+            "validation": "valid_checker_config"
+          },
+          {
+            "field_name": "fulfillmentHandler",
+            "data_type": "String!",
+            "source": "default",
+            "value": "manual",
+            "validation": "valid_handler_code"
+          }
+        ],
+        "optional": [
+          {
+            "field_name": "customFields",
+            "data_type": "JSON",
+            "source": "none",
+            "value": null
+          }
+        ]
+      },
+      "outputs": {
+        "shipping_method_id": {
+          "extraction_path": "data.createShippingMethod.id",
+          "data_type": "ID",
+          "description": "Unique identifier for the created shipping method"
+        },
+        "shipping_method_code": {
+          "extraction_path": "data.createShippingMethod.code",
+          "data_type": "String",
+          "description": "Unique code for the shipping method"
+        }
+      },
+      "dependencies": {
+        "depends_on_steps": ["step_2"],
+        "required_for_steps": [],
+        "data_flow": [
+          {
+            "from": "step_2.zone_id",
+            "to": "step_4.inputs.checker.arguments.zoneId"
+          }
+        ]
+      },
+      "error_handling": {
+        "failure_scenarios": ["Invalid calculator code", "Invalid zone ID", "Duplicate shipping method code"],
+        "retry_strategy": "none",
+        "fallback_action": "abort_and_rollback"
+      }
+    }
+  ],
+  "data_transformations": [
+    {
+      "transformation_id": "currency_to_cents",
+      "description": "Convert dollar amount to cents",
+      "input_format": "float (dollars)",
+      "output_format": "integer (cents)",
+      "formula": "value * 100",
+      "example": "$15 → 1500"
+    },
+    {
+      "transformation_id": "name_to_slug",
+      "description": "Convert human-readable name to API code",
+      "input_format": "string (spaces, mixed case)",
+      "output_format": "string (lowercase, hyphens)",
+      "formula": "lowercase(replace(trim(value), ' ', '-'))",
+      "example": "Oceania Flat Rate → oceania-flat-rate"
+    },
+    {
+      "transformation_id": "country_name_to_id",
+      "description": "Map country name to country ID",
+      "input_format": "string (country name)",
+      "output_format": "ID (database identifier)",
+      "formula": "lookup_in_countries_list(country_code)",
+      "example": "Australia → {country_id_from_step_1}"
+    }
+  ],
+  "rollback_strategy": {
+    "enabled": true,
+    "steps": [
+      {
+        "if_step_fails": "step_4",
+        "rollback_actions": [
+          {
+            "action": "deleteZone",
+            "target_id": "{step_2.zone_id}",
+            "condition": "zone_has_no_other_shipping_methods"
+          }
+        ]
+      },
+      {
+        "if_step_fails": "step_3",
+        "rollback_actions": [
+          {
+            "action": "deleteZone",
+            "target_id": "{step_2.zone_id}"
+          }
+        ]
+      }
+    ]
+  },
+  "validation_rules": {
+    "pre_execution": [
+      {
+        "rule": "countries_exist",
+        "check": "Australia and New Zealand must exist in countries list",
+        "failure_action": "abort_workflow"
+      }
+    ],
+    "post_execution": [
+      {
+        "rule": "zone_created",
+        "check": "Zone with name 'Oceania' exists",
+        "failure_action": "retry_step_2"
+      },
+      {
+        "rule": "shipping_method_active",
+        "check": "Shipping method is available for the zone",
+        "failure_action": "alert_user"
+      }
+    ]
+  }
+}
